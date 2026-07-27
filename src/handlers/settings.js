@@ -15,12 +15,31 @@ function watchLabel(asset) {
   return asset.split('.')[0];
 }
 
-async function addBuyWatch(ctx, asset) {
+async function addBuyWatch(ctx, asset, { toChat = false } = {}) {
+  const chatId = toChat ? ctx.chat.id : null;
+  if (toChat) q.clearChatBuyWatch.run(chatId); // one feed per chat
+
   // High-water mark starts at "now" so existing history doesn't replay as new.
   q.addBuyWatch.run({
-    tg_id: ctx.from.id, asset, last_seen: Date.now(), created_at: Date.now(),
+    tg_id: ctx.from.id, chat_id: chatId, asset, last_seen: Date.now(), created_at: Date.now(),
   });
-  await ctx.reply(`🟢 Watching ${watchLabel(asset)} for new buys.`);
+
+  await ctx.reply(
+    toChat
+      ? `✅ Buy bot set to ${watchLabel(asset)}. New buys will be posted here.`
+      : `🟢 Watching ${watchLabel(asset)} for new buys.`,
+  );
+}
+
+/** In a group, only admins may point the feed at a token. */
+async function canConfigureChat(ctx) {
+  if (ctx.chat?.type === 'private') return true;
+  try {
+    const m = await ctx.telegram.getChatMember(ctx.chat.id, ctx.from.id);
+    if (m.status === 'creator' || m.status === 'administrator') return true;
+  } catch { /* fall through to the refusal below */ }
+  await ctx.reply('Only a group admin can set the buy bot.');
+  return false;
 }
 
 export function registerSettings(bot) {
@@ -101,6 +120,108 @@ export function registerSettings(bot) {
     await ctx.answerCbQuery();
     try { await addBuyWatch(ctx, derefOrThrow(ctx.match[1])); }
     catch (e) { await ctx.reply(`❌ ${e.message}`); }
+  });
+
+  /* Group buy bot ---------------------------------------------------- */
+
+  bot.command('settokenbot', async (ctx) => {
+    if (!(await canConfigureChat(ctx))) return;
+
+    const arg = ctx.message.text.split(/\s+/).slice(1).join(' ').trim();
+    if (!arg) {
+      const current = q.listChatBuyWatch.all(ctx.chat.id)[0];
+      return ctx.replyWithHTML([
+        '<b>🤖 Buy bot</b>',
+        '',
+        current ? `Currently posting: <b>${esc(watchLabel(current.asset))}</b>` : 'Not set for this chat yet.',
+        '',
+        'Usage: <code>/settokenbot RDL</code>',
+        'Also accepts a <code>CODE.issuer</code> pair, a collection name, or an NFTokenID.',
+        '',
+        'Stop with <code>/stoptokenbot</code>.',
+      ].join('\n'));
+    }
+
+    try {
+      if (/^[0-9A-F]{64}$/i.test(arg)) return await addBuyWatch(ctx, arg.toUpperCase(), { toChat: true });
+      if (arg.includes('.') || arg.includes(':')) {
+        return await addBuyWatch(ctx, assetKey(parseAsset(arg)), { toChat: true });
+      }
+
+      const res = await safe(api.search(arg, 8));
+      const toks = (res?.tokens || []).slice(0, 6);
+      const cols = (res?.collections || []).slice(0, 4);
+      if (!toks.length && !cols.length) return ctx.reply('Nothing matched that name.');
+
+      const rows = [
+        ...toks.map((t) => {
+          const code = fromCurrencyCode(t.currency);
+          return [{ text: `🪙 ${code} — ${t.name || short(t.issuer)}`,
+                   callback_data: `tokenbot:set:${ref(`${code}.${t.issuer}`)}` }];
+        }),
+        ...cols.map((c) => [{ text: `🖼 ${c.name || c.slug} (collection)`,
+                             callback_data: `tokenbot:set:${ref(`col:${c.slug}`)}` }]),
+      ];
+      await ctx.replyWithHTML('<b>Pick the token this chat should post buys for</b>',
+        { reply_markup: { inline_keyboard: rows } });
+    } catch (e) {
+      await ctx.reply(`❌ ${e.message}`);
+    }
+  });
+
+  bot.action(/^tokenbot:set:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!(await canConfigureChat(ctx))) return;
+    try { await addBuyWatch(ctx, derefOrThrow(ctx.match[1]), { toChat: true }); }
+    catch (e) { await ctx.reply(`❌ ${e.message}`); }
+  });
+
+  bot.command('setnftbot', async (ctx) => {
+    if (!(await canConfigureChat(ctx))) return;
+
+    const arg = ctx.message.text.split(/\s+/).slice(1).join(' ').trim();
+    if (!arg) {
+      const current = q.listChatBuyWatch.all(ctx.chat.id)[0];
+      return ctx.replyWithHTML([
+        '<b>🖼 NFT buy bot</b>',
+        '',
+        current ? `Currently posting: <b>${esc(watchLabel(current.asset))}</b>` : 'Not set for this chat yet.',
+        '',
+        'Usage: <code>/setnftbot xPEPE</code>',
+        'Posts every sale in that collection, with a link to the exact NFT.',
+        '',
+        'Stop with <code>/stoptokenbot</code>.',
+      ].join('\n'));
+    }
+
+    try {
+      // A raw NFTokenID watches that single NFT; anything else resolves to a
+      // collection, which is what makes the feed continuous rather than one-off.
+      if (/^[0-9A-F]{64}$/i.test(arg)) return await addBuyWatch(ctx, arg.toUpperCase(), { toChat: true });
+
+      const res = await safe(api.search(arg, 10));
+      const cols = (res?.collections || []).slice(0, 8);
+      if (!cols.length) return ctx.reply('No collection matched that name.');
+
+      if (cols.length === 1) return await addBuyWatch(ctx, `col:${cols[0].slug}`, { toChat: true });
+
+      await ctx.replyWithHTML('<b>Pick the collection</b>', {
+        reply_markup: {
+          inline_keyboard: cols.map((c) => [{
+            text: `🖼 ${c.name || c.slug}`,
+            callback_data: `tokenbot:set:${ref(`col:${c.slug}`)}`,
+          }]),
+        },
+      });
+    } catch (e) {
+      await ctx.reply(`❌ ${e.message}`);
+    }
+  });
+
+  bot.command('stoptokenbot', async (ctx) => {
+    if (!(await canConfigureChat(ctx))) return;
+    const n = q.clearChatBuyWatch.run(ctx.chat.id).changes;
+    await ctx.reply(n ? '🛑 Buy bot stopped for this chat.' : 'No buy bot was set here.');
   });
 
   bot.action('alert:new', async (ctx) => {
@@ -320,20 +441,31 @@ async function checkBuyWatch(bot, w) {
       t0.holders != null ? `👤 Hold: <b>${compact(t0.holders)}</b> | Trust: <b>${compact(t0.trustlines ?? t0.lines)}</b>` : null,
     ].filter((l) => l !== null); // keep '' — those are the deliberate blank separators
 
+    const buttons = [];
+    // Group feeds can't use callback buttons for trading — the trade guard
+    // sends people to a DM anyway — so link out instead.
+    if (!isNft && !isCollection) {
+      buttons.push(md5
+        ? { text: '💰 Buy', url: links.scanner(md5) }
+        : { text: '💰 Buy', callback_data: `buy:show:${ref(w.asset)}` });
+      buttons.push({ text: '🔄 Swap', url: links.swap });
+      if (md5) buttons.push({ text: '📊 Chart', url: links.scanner(md5) });
+    } else {
+      if (t.NFTokenID) buttons.push({ text: '🖼 View NFT', url: links.nft(t.NFTokenID) });
+      if (isCollection) buttons.push({ text: '🔥 Collection', url: links.collection(w.asset.slice(4)) });
+      buttons.push({ text: '🔄 Swap', url: links.swap });
+    }
+    if (t.hash) buttons.push({ text: '🧾 TX', url: links.tx(t.hash) });
+
+    // Telegram caps a row at 8; keep rows to 3 so labels stay readable.
+    const keyboard = [];
+    for (let i = 0; i < buttons.length; i += 3) keyboard.push(buttons.slice(i, i + 3));
+
     await bot.telegram.sendMessage(
-      w.tg_id,
+      // Group buy-bot rows carry chat_id; personal watches fall back to the owner.
+      w.chat_id || w.tg_id,
       lines.join('\n'),
-      {
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
-        reply_markup: {
-          inline_keyboard: [[
-            ...(isNft || isCollection
-              ? [] : [{ text: '💰 Buy now', callback_data: `buy:show:${ref(w.asset)}` }]),
-            { text: '🔄 Swap', url: links.swap },
-          ]],
-        },
-      },
+      { parse_mode: 'HTML', disable_web_page_preview: true, reply_markup: { inline_keyboard: keyboard } },
     );
   }
 }

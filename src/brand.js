@@ -30,8 +30,12 @@ const explorerBase = () =>
 export const links = {
   swap: 'https://swap.riddlewallet.com/',
   // xrpl.to-style md5(currency+issuer) id — same field the bot already reads off `api.token()`.
-  scanner: (md5) => `https://scanner.riddlewallet.com/token/${md5}`,
+  // Route shapes taken from the scanner bundle's own link builders — it
+  // lowercases the md5, and has no per-NFT page, only /collection/<slug>.
+  scanner: (md5) => `https://scanner.riddlewallet.com/token/${String(md5).toLowerCase()}`,
   trending: 'https://scanner.riddlewallet.com/',
+  collection: (slug) => `https://scanner.riddlewallet.com/collection/${encodeURIComponent(slug)}`,
+  nft: (nftokenId) => `${explorerBase()}/nft/${nftokenId}`,
   tx: (hash) => `${explorerBase()}/transactions/${hash}`,
   account: (address) => `${explorerBase()}/accounts/${address}`,
 };

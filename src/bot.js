@@ -52,5 +52,8 @@ export const COMMANDS = [
   { command: 'menu', description: 'Main menu' },
   { command: 'wallet', description: 'Wallet and balance' },
   { command: 'history', description: 'Recent trades' },
+  { command: 'settokenbot', description: 'Post token buys in this chat' },
+  { command: 'setnftbot', description: 'Post NFT collection sales in this chat' },
+  { command: 'stoptokenbot', description: 'Stop posting buys here' },
   { command: 'about', description: `About ${brand.name}` },
 ];
