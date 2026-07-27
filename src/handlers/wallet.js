@@ -3,7 +3,7 @@ import { ensureUser, q } from '../services/db.js';
 import { createWallet, importWallet, loadWallet, exportSeed, forgetWallet, requireWallet } from '../services/wallet.js';
 import { getXrpBalance, getTrustlines, submit } from '../services/xrpl.js';
 import { setState, clearState } from '../services/session.js';
-import { mainMenu, walletMenu, backButton, confirmKeyboard, esc, num, short } from '../ui/index.js';
+import { mainMenu, walletMenu, backButton, confirmKeyboard, editOrReply, esc, num, short } from '../ui/index.js';
 import { config } from '../config.js';
 import { brand, footer, adFooter, sendLogo } from '../brand.js';
 
@@ -32,9 +32,7 @@ export function registerWallet(bot) {
 
   bot.action('menu:main', async (ctx) => {
     await ctx.answerCbQuery();
-    // /start sends a photo, and a photo message can't be edited into text.
-    await ctx.editMessageText(`<b>${brand.name}</b>`, { parse_mode: 'HTML', ...mainMenu() })
-      .catch(() => ctx.replyWithHTML(`<b>${brand.name}</b>`, mainMenu()));
+    await editOrReply(ctx, `<b>${brand.name}</b>`, mainMenu());
   });
 
   bot.command('about', async (ctx) => {
@@ -58,7 +56,7 @@ export function registerWallet(bot) {
       const text = 'No wallet connected yet.\n\nCreate a fresh one, or import a seed you already control.';
       const kb = walletMenu(false);
       return edit
-        ? ctx.editMessageText(text, { parse_mode: 'HTML', ...kb })
+        ? editOrReply(ctx, text, kb)
         : ctx.replyWithHTML(text, kb);
     }
 
@@ -81,7 +79,7 @@ export function registerWallet(bot) {
 
     const kb = walletMenu(true);
     return edit
-      ? ctx.editMessageText(text, { parse_mode: 'HTML', ...kb })
+      ? editOrReply(ctx, text, kb)
       : ctx.replyWithHTML(text, kb);
   };
 
@@ -148,7 +146,7 @@ export function registerWallet(bot) {
   bot.action('wallet:forget:yes', async (ctx) => {
     await ctx.answerCbQuery();
     forgetWallet(ctx.from.id);
-    await ctx.editMessageText('Wallet removed.', { ...backButton('menu:main') });
+    await editOrReply(ctx, 'Wallet removed.', backButton('menu:main'));
   });
 
   /* ---------------------------------------------------------------- */

@@ -3,14 +3,14 @@ import { parseAsset, assetKey } from '../services/xrpl.js';
 import { quoteBuy } from '../services/tokens.js';
 import { setState, clearState } from '../services/session.js';
 import { ref } from '../services/refs.js';
-import { settingsMenu, backButton, esc, num } from '../ui/index.js';
+import { settingsMenu, backButton, editOrReply, esc, num } from '../ui/index.js';
 import { config } from '../config.js';
 
 export function registerSettings(bot) {
   bot.action('menu:settings', async (ctx) => {
     await ctx.answerCbQuery();
     const user = ensureUser(ctx);
-    await ctx.editMessageText('<b>⚙️ Settings</b>', { parse_mode: 'HTML', ...settingsMenu(user) });
+    await editOrReply(ctx, '<b>⚙️ Settings</b>', settingsMenu(user));
   });
 
   bot.action('set:slippage', async (ctx) => {
@@ -39,10 +39,7 @@ export function registerSettings(bot) {
     const next = user.auto_trustline ? 0 : 1;
     q.setAutoTrustline.run(next, ctx.from.id);
     await ctx.answerCbQuery(next ? 'Auto-trustline on' : 'Auto-trustline off');
-    await ctx.editMessageText('<b>⚙️ Settings</b>', {
-      parse_mode: 'HTML',
-      ...settingsMenu(q.getUser.get(ctx.from.id)),
-    });
+    await editOrReply(ctx, '<b>⚙️ Settings</b>', settingsMenu(q.getUser.get(ctx.from.id)));
   });
 
   /* Alerts ----------------------------------------------------------- */

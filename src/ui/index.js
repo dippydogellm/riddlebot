@@ -29,6 +29,19 @@ export function short(addr) {
   return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—';
 }
 
+/**
+ * /start sends a photo, and Telegram cannot edit a photo message into text —
+ * it answers 400 "there is no text in the message to edit". Every menu opened
+ * from that first message hits this, so edits always need a reply fallback.
+ */
+export async function editOrReply(ctx, text, extra = {}) {
+  try {
+    return await ctx.editMessageText(text, { parse_mode: 'HTML', ...extra });
+  } catch {
+    return ctx.replyWithHTML(text, extra);
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Keyboards                                                           */
 /* ------------------------------------------------------------------ */

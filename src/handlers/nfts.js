@@ -7,7 +7,7 @@ import {
 import { api, safe } from '../services/api.js';
 import { setState, clearState } from '../services/session.js';
 import { ref, derefOrThrow } from '../services/refs.js';
-import { nftMenu, nftActions, backButton, esc, num, short } from '../ui/index.js';
+import { nftMenu, nftActions, backButton, editOrReply, esc, num, short } from '../ui/index.js';
 
 const NFTOKEN_ID = /^[0-9A-F]{64}$/i;
 
@@ -42,16 +42,14 @@ export function registerNfts(bot) {
 
     const kb = nftActions(ref(nftokenId), !!floor);
     const opts = { parse_mode: 'HTML', disable_web_page_preview: true, ...kb };
-    return edit ? ctx.editMessageText(lines.join('\n'), opts) : ctx.replyWithHTML(lines.join('\n'), opts);
+    return edit ? editOrReply(ctx, lines.join('\n'), opts) : ctx.replyWithHTML(lines.join('\n'), opts);
   };
 
   /* ---------------------------------------------------------------- */
 
   bot.action('menu:nft', async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.editMessageText('<b>🖼 NFTs</b>\n\nBrowse collections, or paste any NFTokenID directly.', {
-      parse_mode: 'HTML', ...nftMenu(),
-    });
+    await editOrReply(ctx, '<b>🖼 NFTs</b>\n\nBrowse collections, or paste any NFTokenID directly.', nftMenu());
   });
 
   bot.action('nft:collections', async (ctx) => {

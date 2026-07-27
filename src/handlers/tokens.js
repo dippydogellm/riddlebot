@@ -5,7 +5,7 @@ import { buyToken, sellToken, quoteBuy, quoteSell } from '../services/tokens.js'
 import { api, safe } from '../services/api.js';
 import { setState, clearState } from '../services/session.js';
 import { ref, derefOrThrow } from '../services/refs.js';
-import { buyKeyboard, sellKeyboard, backButton, mainMenu, esc, num, pct, short } from '../ui/index.js';
+import { buyKeyboard, sellKeyboard, backButton, mainMenu, editOrReply, esc, num, pct, short } from '../ui/index.js';
 import { adFooter } from '../brand.js';
 
 /* ------------------------------------------------------------------ */
@@ -64,7 +64,7 @@ export function registerTokens(bot) {
       const { text, asset, md5 } = await tokenCard(assetStr);
       const kb = buyKeyboard(ref(assetKey(asset)), md5);
       return edit
-        ? ctx.editMessageText(text, { parse_mode: 'HTML', disable_web_page_preview: true, ...kb })
+        ? editOrReply(ctx, text, { disable_web_page_preview: true, ...kb })
         : ctx.replyWithHTML(text, { disable_web_page_preview: true, ...kb });
     } catch (e) {
       return ctx.reply(`❌ ${e.message}`);
