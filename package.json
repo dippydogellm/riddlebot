@@ -1,0 +1,25 @@
+{
+  "name": "riddle-buy-bot",
+  "version": "1.0.0",
+  "description": "Telegram buy bot for XRPL tokens and NFTs",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "keygen": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3",
+    "xrpl": "^4.1.0"
+  },
+  "overrides": {
+    "@noble/hashes": "^1.8.0",
+    "@scure/base": "^1.2.6"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

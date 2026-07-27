@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "public",
+  "functions": {
+    "api/webhook.js": {
+      "maxDuration": 60,
+      "includeFiles": "assets/**"
+    }
+  },
+  "rewrites": [
+    { "source": "/api/admin/:path*", "destination": "/api/admin" },
+    { "source": "/admin", "destination": "/api/admin" }
+  ]
+}
