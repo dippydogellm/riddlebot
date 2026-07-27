@@ -52,6 +52,12 @@ CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(tg_id, created_at DESC);
   addCol('social_telegram');
   addCol('social_discord');
   addCol('social_website');
+
+  // watch started life as price-only; 'buys' rows track trade activity instead,
+  // and need a high-water mark so a restart doesn't replay old fills as new.
+  const wc = new Set(db.prepare('PRAGMA table_info(watch)').all().map((c) => c.name));
+  if (!wc.has('kind')) db.exec("ALTER TABLE watch ADD COLUMN kind TEXT NOT NULL DEFAULT 'price'");
+  if (!wc.has('last_seen')) db.exec('ALTER TABLE watch ADD COLUMN last_seen INTEGER');
 }
 
 export const q = {
@@ -81,6 +87,12 @@ export const q = {
     INSERT INTO watch (tg_id, asset, target, direction, created_at)
     VALUES (@tg_id, @asset, @target, @direction, @created_at)
   `),
+
+  addBuyWatch: db.prepare(`
+    INSERT INTO watch (tg_id, asset, kind, last_seen, created_at)
+    VALUES (@tg_id, @asset, 'buys', @last_seen, @created_at)
+  `),
+  setWatchSeen: db.prepare('UPDATE watch SET last_seen = ? WHERE id = ?'),
   listWatch: db.prepare('SELECT * FROM watch WHERE tg_id = ?'),
   allWatch: db.prepare('SELECT * FROM watch'),
   deleteWatch: db.prepare('DELETE FROM watch WHERE id = ? AND tg_id = ?'),

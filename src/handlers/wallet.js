@@ -3,7 +3,7 @@ import { ensureUser, q } from '../services/db.js';
 import { createWallet, importWallet, loadWallet, exportSeed, forgetWallet, requireWallet } from '../services/wallet.js';
 import { getXrpBalance, getTrustlines, submit } from '../services/xrpl.js';
 import { setState, clearState } from '../services/session.js';
-import { mainMenu, walletMenu, backButton, confirmKeyboard, editOrReply, esc, num, short } from '../ui/index.js';
+import { mainMenu, walletMenu, backButton, confirmKeyboard, editOrReply, requirePrivate, esc, num, short } from '../ui/index.js';
 import { config } from '../config.js';
 import { brand, footer, adFooter, sendLogo } from '../brand.js';
 
@@ -83,14 +83,15 @@ export function registerWallet(bot) {
       : ctx.replyWithHTML(text, kb);
   };
 
-  bot.command('wallet', (ctx) => showWallet(ctx));
-  bot.action('menu:wallet', async (ctx) => { await ctx.answerCbQuery(); await showWallet(ctx, true); });
-  bot.action('wallet:refresh', async (ctx) => { await ctx.answerCbQuery('Refreshing…'); await showWallet(ctx, true); });
+  bot.command('wallet', async (ctx) => { if (await requirePrivate(ctx)) await showWallet(ctx); });
+  bot.action('menu:wallet', async (ctx) => { await ctx.answerCbQuery(); if (await requirePrivate(ctx)) await showWallet(ctx, true); });
+  bot.action('wallet:refresh', async (ctx) => { await ctx.answerCbQuery('Refreshing…'); if (await requirePrivate(ctx)) await showWallet(ctx, true); });
 
   /* ---------------------------------------------------------------- */
 
   bot.action('wallet:create', async (ctx) => {
     await ctx.answerCbQuery();
+    if (!(await requirePrivate(ctx))) return;
     ensureUser(ctx);
     if (q.getUser.get(ctx.from.id)?.address) {
       return ctx.reply('You already have a wallet. Remove it first if you want a new one.');
@@ -120,6 +121,7 @@ export function registerWallet(bot) {
 
   bot.action('wallet:import', async (ctx) => {
     await ctx.answerCbQuery();
+    if (!(await requirePrivate(ctx))) return;
     setState(ctx.from.id, { awaiting: 'import_seed' });
     await ctx.replyWithHTML(
       'Send your family seed (starts with <code>s</code>).\n\nI will delete your message immediately after reading it.',
@@ -129,6 +131,7 @@ export function registerWallet(bot) {
 
   bot.action('wallet:export', async (ctx) => {
     await ctx.answerCbQuery();
+    if (!(await requirePrivate(ctx))) return;
     try {
       const seed = exportSeed(ctx.from.id);
       const msg = await ctx.replyWithHTML(
@@ -142,6 +145,7 @@ export function registerWallet(bot) {
 
   bot.action('wallet:forget', async (ctx) => {
     await ctx.answerCbQuery();
+    if (!(await requirePrivate(ctx))) return;
     await ctx.replyWithHTML(
       '<b>Remove wallet?</b>\n\nI will erase the encrypted seed from my database. If you have not exported it, the funds are gone for good.',
       confirmKeyboard('wallet:forget:yes', 'menu:wallet'),
@@ -150,6 +154,7 @@ export function registerWallet(bot) {
 
   bot.action('wallet:forget:yes', async (ctx) => {
     await ctx.answerCbQuery();
+    if (!(await requirePrivate(ctx))) return;
     forgetWallet(ctx.from.id);
     await editOrReply(ctx, 'Wallet removed.', backButton('menu:main'));
   });
@@ -158,6 +163,7 @@ export function registerWallet(bot) {
 
   bot.action('wallet:withdraw', async (ctx) => {
     await ctx.answerCbQuery();
+    if (!(await requirePrivate(ctx))) return;
     setState(ctx.from.id, { awaiting: 'withdraw' });
     await ctx.replyWithHTML(
       'Send: <code>rDestinationAddress amount</code>\n\nExample: <code>rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe 25</code>\nUse <code>max</code> for the amount to send everything above reserve.',
@@ -171,7 +177,10 @@ export function registerWallet(bot) {
     async handleText(ctx, state) {
       if (state.awaiting === 'import_seed') {
         clearState(ctx.from.id);
+        // Prompt state is keyed by user, not chat, so a seed can still land in
+        // a group. Delete it there and refuse rather than importing.
         await ctx.deleteMessage().catch(() => {});
+        if (!(await requirePrivate(ctx))) return true;
         try {
           const w = importWallet(ctx.from.id, ctx.message.text);
           await ctx.replyWithHTML(`<b>✅ Imported</b>\n\n<code>${esc(w.address)}</code>`, backButton('menu:wallet'));
@@ -183,6 +192,7 @@ export function registerWallet(bot) {
 
       if (state.awaiting === 'withdraw') {
         clearState(ctx.from.id);
+        if (!(await requirePrivate(ctx))) return true;
         const [dest, rawAmount] = ctx.message.text.trim().split(/\s+/);
 
         if (!/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(dest || '')) {

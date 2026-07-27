@@ -30,6 +30,24 @@ export function short(addr) {
 }
 
 /**
+ * Wallet screens print the address, and seed export prints the key itself.
+ * In a group that hands every member the funds, so these stay DM-only —
+ * the user gets a deep link back into a private chat instead.
+ */
+export async function requirePrivate(ctx) {
+  if (ctx.chat?.type === 'private') return true;
+
+  const username = ctx.botInfo?.username;
+  await ctx.reply(
+    '🔒 Wallet actions only work in a private chat — a seed posted in a group is a seed everyone owns.',
+    username
+      ? { reply_markup: { inline_keyboard: [[{ text: '🔒 Continue in private', url: `https://t.me/${username}` }]] } }
+      : undefined,
+  );
+  return false;
+}
+
+/**
  * /start sends a photo, and Telegram cannot edit a photo message into text —
  * it answers 400 "there is no text in the message to edit". Every menu opened
  * from that first message hits this, so edits always need a reply fallback.

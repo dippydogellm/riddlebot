@@ -50,6 +50,13 @@ export const api = {
   /** OHLC candles for charts / alerts. */
   ohlc: (id, range = '1D') => call(`/ohlc/${encodeURIComponent(id)}`, { range }),
 
+  /** Recent fills for a token, newest first. Keyed by md5, not slug. */
+  history: (md5, limit = 20) => call('/history', { md5, limit }),
+
+  /** Recent sales/transfers for one NFT. */
+  nftHistory: (nftokenId, limit = 20) =>
+    call(`/nft/history/${encodeURIComponent(nftokenId)}`, { limit }),
+
   /** Account holdings, enriched with USD values. */
   trustlines: (address) => call(`/account/trustlines/${address}`),
   balance: (address) => call(`/account/balance/${address}`),
