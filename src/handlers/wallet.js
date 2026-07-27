@@ -106,9 +106,14 @@ export function registerWallet(bot) {
         `Seed (save this now, it will not be shown again):\n<tg-spoiler><code>${esc(w.seed)}</code></tg-spoiler>`,
         '',
         `⚠️ Fund it with at least <b>${config.limits.reserveBufferXrp + 1} XRP</b> — the ledger holds a base reserve, plus 0.2 XRP per trustline.`,
+        // On testnet the funding step is otherwise a dead end: there is nowhere
+        // to buy test XRP, so the faucet link is the only way to finish setup.
+        config.xrpl.network === 'testnet'
+          ? '\n🚰 This bot is on <b>testnet</b>. Get free test XRP:\nhttps://xrpl.org/xrp-testnet-faucet.html'
+          : '',
         '',
         'Anyone with that seed owns the funds. Delete this message once you have stored it somewhere safe.',
-      ].join('\n'),
+      ].filter(Boolean).join('\n'),
       backButton('menu:wallet'),
     );
   });
