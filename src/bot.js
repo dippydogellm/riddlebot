@@ -16,6 +16,46 @@ import { registerSettings } from './handlers/settings.js';
 export function buildBot() {
   const bot = new Telegraf(config.botToken, { handlerTimeout: 120_000 });
 
+  /**
+   * The bot is DM-only. Groups get exactly one capability: an admin pointing
+   * the buy-bot feed at a token or collection. Everything else — wallets,
+   * trading, menus — stays in a private chat, so nothing that touches funds
+   * or reveals a balance can happen in front of an audience.
+   *
+   * This runs before any handler is registered, so it covers every command,
+   * button and message rather than relying on per-handler guards.
+   */
+  const GROUP_ALLOWED = /^\/(settokenbot|setnftbot|stoptokenbot)(@\w+)?\b/i;
+
+  bot.use(async (ctx, next) => {
+    const type = ctx.chat?.type;
+    if (!type || type === 'private') return next();
+
+    if (GROUP_ALLOWED.test(ctx.message?.text || '')) return next();
+
+    // Buttons on alerts posted into a group: send the person to a DM.
+    if (ctx.callbackQuery) {
+      const username = ctx.botInfo?.username;
+      await ctx.answerCbQuery(
+        username ? 'Open me in private to trade.' : 'Trading only works in a private chat.',
+        { url: username ? `https://t.me/${username}` : undefined },
+      ).catch(() => {});
+      return;
+    }
+
+    // Otherwise stay silent. Only speak when explicitly addressed —
+    // /command@thisbot — so the bot never talks over a group unprompted.
+    const text = ctx.message?.text || '';
+    const username = ctx.botInfo?.username;
+    const addressed = username && new RegExp(`^/\\w+@${username}\\b`, 'i').test(text);
+    if (!addressed) return;
+
+    await ctx.reply(
+      'I only work in a private chat. In a group I can post buys — an admin can set that up with /settokenbot.',
+      { reply_markup: { inline_keyboard: [[{ text: '🔒 Open in private', url: `https://t.me/${username}` }]] } },
+    ).catch(() => {});
+  });
+
   const wallet = registerWallet(bot);
   const tokens = registerTokens(bot);
   const nfts = registerNfts(bot);
