@@ -4,6 +4,7 @@ import { quoteBuy } from '../services/tokens.js';
 import { setState, clearState } from '../services/session.js';
 import { ref } from '../services/refs.js';
 import { api, safe } from '../services/api.js';
+import { links } from '../brand.js';
 import { settingsMenu, backButton, editOrReply, esc, num, short } from '../ui/index.js';
 import { config } from '../config.js';
 
@@ -190,49 +191,95 @@ export function registerSettings(bot) {
 
 /* ------------------------------------------------------------------ */
 
+/** Green blocks scaled to buy size — the visual cue every buy bot leads with. */
+function sizeBar(xrp) {
+  if (!(xrp > 0)) return '';
+  const n = Math.min(48, Math.max(1, Math.round(Math.sqrt(xrp))));
+  return '🟢'.repeat(n);
+}
+
+const compact = (v) =>
+  v == null ? null : Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(v);
+
 /** Notifies on new fills for a 'buys' watch and advances its high-water mark. */
 async function checkBuyWatch(bot, w) {
   const isNft = w.asset.length === 64;
 
   let trades = [];
+  let t0 = {};
+  let md5 = null;
+
   if (isNft) {
     const res = await safe(api.nftHistory(w.asset, 10));
     trades = res?.history || res?.data || [];
   } else {
     const asset = parseAsset(w.asset);
     const meta = await safe(api.token(`${asset.issuer}-${asset.currency}`));
-    const md5 = (meta?.token || meta)?.md5;
+    t0 = meta?.token || meta || {};
+    md5 = t0.md5;
     if (!md5) return;
     const res = await safe(api.history(md5, 10));
     trades = res?.data || res?.history || [];
   }
 
   const since = w.last_seen || 0;
+  const label = isNft ? `NFT ${w.asset.slice(0, 8)}…` : parseAsset(w.asset).label;
+
   const fresh = trades
     .map((t) => ({ ...t, _t: Number(t.time || t.timestamp || 0) }))
     .filter((t) => t._t > since)
+    // Only acquisitions of the watched token count as a buy; the same feed
+    // carries sells, which would otherwise fire a green "New BUY" alert.
+    .filter((t) => (isNft ? true : t.got?.currency === t0.currency || t.got?.issuer === t0.issuer))
     .sort((a, b) => a._t - b._t);
 
   if (!fresh.length) return;
   q.setWatchSeen.run(fresh[fresh.length - 1]._t, w.id);
 
+  // USD per XRP, derived from the token's own quote so no extra request.
+  const usdPerXrp = t0.usd && t0.exch ? Number(t0.usd) / Number(t0.exch) : null;
+
   // Cap the burst: a busy token shouldn't spam a hundred messages at once.
   for (const t of fresh.slice(-3)) {
-    const label = isNft ? `NFT ${w.asset.slice(0, 10)}…` : parseAsset(w.asset).label;
-    const amount = t.got?.value ?? t.amount ?? t.price;
+    const gotAmt = Number(t.got?.value ?? t.amount ?? 0) || null;
+    // Routes that never touch XRP (token-to-token, AMM hops) still need a size
+    // to show, so fall back to valuing what was received at the token's rate.
+    const xrpSpent = t.paid?.currency === 'XRP'
+      ? Number(t.paid.value)
+      : (Number(t._mergedXrp) || (gotAmt && t0.exch ? gotAmt * Number(t0.exch) : null));
+    const usd = xrpSpent && usdPerXrp ? xrpSpent * usdPerXrp : null;
+
+    const row2 = [
+      t.hash ? `<a href="${links.tx(t.hash)}">TX</a>` : null,
+      t.taker ? `<a href="${links.account(t.taker)}">Buyer</a>` : null,
+      md5 ? `<a href="${links.scanner(md5)}">Chart</a>` : null,
+      md5 ? `<a href="${links.trending}">Trending</a>` : null,
+    ].filter(Boolean).join(' | ');
+
+    const lines = [
+      `🆕 <b>New BUY</b> <b>${esc(label)}</b>`,
+      sizeBar(xrpSpent),
+      '',
+      xrpSpent ? `🔻 <b>${num(xrpSpent, 4)} XRP</b>${usd ? ` | $${num(usd, 2)}` : ''}` : null,
+      gotAmt ? `🔺 <b>${num(gotAmt, 2)} ${esc(label)}</b>` : null,
+      t.isAMM ? '💠 via AMM' : null,
+      row2 ? `🏷 ${row2}` : null,
+      '',
+      t0.marketcap != null ? `🏛 Market Cap: <b>$${compact(t0.marketcap)}</b>` : null,
+      t0.holders != null ? `👤 Hold: <b>${compact(t0.holders)}</b> | Trust: <b>${compact(t0.trustlines ?? t0.lines)}</b>` : null,
+    ].filter((l) => l !== null); // keep '' — those are the deliberate blank separators
+
     await bot.telegram.sendMessage(
       w.tg_id,
-      [
-        `🟢 <b>New buy — ${esc(label)}</b>`,
-        '',
-        amount != null ? `Size: <b>${num(amount, 4)}</b>` : '',
-        t.taker ? `Buyer: <code>${short(t.taker)}</code>` : '',
-        t.isAMM ? 'via AMM' : '',
-      ].filter(Boolean).join('\n'),
+      lines.join('\n'),
       {
         parse_mode: 'HTML',
-        reply_markup: isNft ? undefined : {
-          inline_keyboard: [[{ text: '💰 Buy now', callback_data: `buy:show:${ref(w.asset)}` }]],
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: [[
+            ...(isNft ? [] : [{ text: '💰 Buy now', callback_data: `buy:show:${ref(w.asset)}` }]),
+            { text: '🔄 Swap', url: links.swap },
+          ]],
         },
       },
     );

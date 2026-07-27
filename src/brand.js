@@ -22,10 +22,18 @@ export const brand = {
   },
 };
 
+const explorerBase = () =>
+  (process.env.XRPL_NETWORK || 'mainnet') === 'mainnet'
+    ? 'https://livenet.xrpl.org'
+    : 'https://testnet.xrpl.org';
+
 export const links = {
   swap: 'https://swap.riddlewallet.com/',
   // xrpl.to-style md5(currency+issuer) id — same field the bot already reads off `api.token()`.
   scanner: (md5) => `https://scanner.riddlewallet.com/token/${md5}`,
+  trending: 'https://scanner.riddlewallet.com/',
+  tx: (hash) => `${explorerBase()}/transactions/${hash}`,
+  account: (address) => `${explorerBase()}/accounts/${address}`,
 };
 
 export const footer = () => {
