@@ -473,7 +473,16 @@ async function checkBuyWatch(bot, w) {
 /** Polls watched assets and fires alerts. */
 export function startAlertLoop(bot, intervalMs = 60_000) {
   const timer = setInterval(async () => {
-    const watches = q.allWatch.all();
+    // This callback is async, so anything thrown outside a try becomes an
+    // unhandled rejection — which terminates the process on modern Node.
+    let watches = [];
+    try {
+      watches = q.allWatch.all();
+    } catch (e) {
+      console.error('[alerts] could not read watches:', e.message);
+      return;
+    }
+
     for (const w of watches) {
       try {
         if (w.kind === 'buys') { await checkBuyWatch(bot, w); continue; }
@@ -494,8 +503,16 @@ export function startAlertLoop(bot, intervalMs = 60_000) {
           },
         );
         q.deleteWatch.run(w.id, w.tg_id);
-      } catch {
-        /* a dead book or rate limit shouldn't kill the loop */
+      } catch (e) {
+        // A dead book, a rate limit, or a group that removed the bot must not
+        // kill the loop. Drop feeds Telegram says are permanently unreachable,
+        // otherwise they retry every minute forever.
+        const code = e?.response?.error_code;
+        const desc = e?.response?.description || '';
+        if (code === 403 || /chat not found|bot was kicked|bot was blocked|group chat was upgraded/i.test(desc)) {
+          console.warn(`[alerts] dropping unreachable watch ${w.id}: ${desc || code}`);
+          try { q.deleteWatch.run(w.id, w.tg_id); } catch { /* already gone */ }
+        }
       }
     }
   }, intervalMs);
