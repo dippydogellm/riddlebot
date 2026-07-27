@@ -5,7 +5,7 @@ import { buyToken, sellToken, quoteBuy, quoteSell } from '../services/tokens.js'
 import { api, safe } from '../services/api.js';
 import { setState, clearState } from '../services/session.js';
 import { ref, derefOrThrow } from '../services/refs.js';
-import { buyKeyboard, sellKeyboard, backButton, mainMenu, editOrReply, esc, num, pct, short } from '../ui/index.js';
+import { buyKeyboard, sellKeyboard, backButton, mainMenu, editOrReply, requirePrivate, esc, num, pct, short } from '../ui/index.js';
 import { adFooter } from '../brand.js';
 
 /* ------------------------------------------------------------------ */
@@ -96,6 +96,7 @@ export function registerTokens(bot) {
 
   bot.action(/^buy:go:([^:]+):([0-9.]+)$/, async (ctx) => {
     await ctx.answerCbQuery('Building transaction…');
+    if (!(await requirePrivate(ctx))) return;
     try { await executeBuy(ctx, derefOrThrow(ctx.match[1]), Number(ctx.match[2])); }
     catch (e) { await ctx.reply(`❌ ${e.message}`); }
   });
@@ -104,6 +105,7 @@ export function registerTokens(bot) {
 
   bot.action('menu:sell', async (ctx) => {
     await ctx.answerCbQuery();
+    if (!(await requirePrivate(ctx))) return;
     const user = ensureUser(ctx);
     if (!user.address) return ctx.reply('Connect a wallet first — /wallet');
 
@@ -149,6 +151,7 @@ export function registerTokens(bot) {
 
   bot.action(/^sell:go:([^:]+):([0-9]+)$/, async (ctx) => {
     await ctx.answerCbQuery('Selling…');
+    if (!(await requirePrivate(ctx))) return;
     try { await executeSell(ctx, derefOrThrow(ctx.match[1]), Number(ctx.match[2])); }
     catch (e) { await ctx.reply(`❌ ${e.message}`); }
   });
@@ -184,6 +187,7 @@ export function registerTokens(bot) {
 
   bot.action('menu:portfolio', async (ctx) => {
     await ctx.answerCbQuery('Loading…');
+    if (!(await requirePrivate(ctx))) return;
     const user = ensureUser(ctx);
     if (!user.address) return ctx.reply('Connect a wallet first — /wallet');
 
@@ -341,6 +345,7 @@ export function registerTokens(bot) {
 
       if (state.awaiting === 'buy_amount') {
         clearState(ctx.from.id);
+        if (!(await requirePrivate(ctx))) return true;
         const amount = Number(text);
         if (!(amount > 0)) { await ctx.reply('Enter a positive number of XRP.'); return true; }
         await executeBuy(ctx, state.asset, amount);
@@ -349,6 +354,7 @@ export function registerTokens(bot) {
 
       if (state.awaiting === 'sell_amount') {
         clearState(ctx.from.id);
+        if (!(await requirePrivate(ctx))) return true;
         const amount = Number(text);
         if (!(amount > 0)) { await ctx.reply('Enter a positive token amount.'); return true; }
         await executeSell(ctx, state.asset, amount, false);

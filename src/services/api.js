@@ -57,6 +57,10 @@ export const api = {
   nftHistory: (nftokenId, limit = 20) =>
     call(`/nft/history/${encodeURIComponent(nftokenId)}`, { limit }),
 
+  /** Activity feed for a whole collection — filter type === 'SALE' for buys. */
+  collectionHistory: (slug, limit = 30) =>
+    call(`/nft/collections/${encodeURIComponent(slug)}/history`, { limit }),
+
   /** Account holdings, enriched with USD values. */
   trustlines: (address) => call(`/account/trustlines/${address}`),
   balance: (address) => call(`/account/balance/${address}`),

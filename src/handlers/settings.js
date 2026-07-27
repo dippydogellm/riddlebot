@@ -1,12 +1,27 @@
 import { q, ensureUser } from '../services/db.js';
-import { parseAsset, assetKey } from '../services/xrpl.js';
+import { parseAsset, assetKey, fromCurrencyCode } from '../services/xrpl.js';
 import { quoteBuy } from '../services/tokens.js';
 import { setState, clearState } from '../services/session.js';
-import { ref } from '../services/refs.js';
+import { ref, derefOrThrow } from '../services/refs.js';
 import { api, safe } from '../services/api.js';
 import { links } from '../brand.js';
 import { settingsMenu, backButton, editOrReply, esc, num, short } from '../ui/index.js';
 import { config } from '../config.js';
+
+/** Human label for a watch row: token code, collection slug, or short NFT id. */
+function watchLabel(asset) {
+  if (asset.startsWith('col:')) return `${asset.slice(4)} (collection)`;
+  if (asset.length === 64) return `NFT ${asset.slice(0, 8)}…`;
+  return asset.split('.')[0];
+}
+
+async function addBuyWatch(ctx, asset) {
+  // High-water mark starts at "now" so existing history doesn't replay as new.
+  q.addBuyWatch.run({
+    tg_id: ctx.from.id, asset, last_seen: Date.now(), created_at: Date.now(),
+  });
+  await ctx.reply(`🟢 Watching ${watchLabel(asset)} for new buys.`);
+}
 
 export function registerSettings(bot) {
   bot.action('menu:settings', async (ctx) => {
@@ -50,7 +65,7 @@ export function registerSettings(bot) {
     await ctx.answerCbQuery();
     const rows = q.listWatch.all(ctx.from.id).map((w) => [{
       text: w.kind === 'buys'
-        ? `🟢 buys · ${w.asset.length === 64 ? 'NFT ' + w.asset.slice(0, 8) : w.asset.split('.')[0]}  ✖`
+        ? `🟢 buys · ${watchLabel(w.asset)}  ✖`
         : `${w.asset.split('.')[0]} ${w.direction} ${num(w.target, 8)} XRP  ✖`,
       callback_data: `alert:del:${w.id}`,
     }]);
@@ -71,12 +86,21 @@ export function registerSettings(bot) {
       [
         '<b>🟢 Watch new buys</b>',
         '',
-        'Send a token as <code>CODE.issuer</code>, or a 64-character NFTokenID.',
-        'You will get a ping each time it trades.',
+        'Send any of:',
+        '• a token name, e.g. <code>SOLO</code>',
+        '• an NFT collection name, e.g. <code>xPEPE</code>',
+        '• a <code>CODE.issuer</code> pair',
+        '• a 64-character NFTokenID',
         '',
-        'Example: <code>SOLO.rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz</code>',
+        'You get a ping each time it is bought.',
       ].join('\n'),
     );
+  });
+
+  bot.action(/^watch:add:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    try { await addBuyWatch(ctx, derefOrThrow(ctx.match[1])); }
+    catch (e) { await ctx.reply(`❌ ${e.message}`); }
   });
 
   bot.action('alert:new', async (ctx) => {
@@ -142,22 +166,36 @@ export function registerSettings(bot) {
       if (state.awaiting === 'watch_buys') {
         clearState(ctx.from.id);
         const raw = text.trim();
-        try {
-          let asset;
-          if (/^[0-9A-F]{64}$/i.test(raw)) {
-            asset = raw.toUpperCase();
-          } else {
-            asset = assetKey(parseAsset(raw));
-          }
-          // Start the high-water mark at "now" so existing fills don't all fire
-          // as new the first time the loop runs.
-          q.addBuyWatch.run({
-            tg_id: ctx.from.id, asset, last_seen: Date.now(), created_at: Date.now(),
-          });
-          await ctx.reply(`🟢 Watching ${asset.length === 64 ? 'that NFT' : asset.split('.')[0]} for new buys.`);
-        } catch (e) {
-          await ctx.reply(`❌ ${e.message}`);
+
+        // Exact identifiers go straight in.
+        if (/^[0-9A-F]{64}$/i.test(raw)) { await addBuyWatch(ctx, raw.toUpperCase()); return true; }
+        if (raw.includes('.') || raw.includes(':')) {
+          try { await addBuyWatch(ctx, assetKey(parseAsset(raw))); }
+          catch (e) { await ctx.reply(`❌ ${e.message}`); }
+          return true;
         }
+
+        // Otherwise treat it as a name and let them pick — requiring people to
+        // know a token's issuer address or a collection's exact slug is why
+        // this step was unusable.
+        const res = await safe(api.search(raw, 8));
+        const toks = (res?.tokens || []).slice(0, 6);
+        const cols = (res?.collections || []).slice(0, 6);
+        if (!toks.length && !cols.length) {
+          await ctx.reply('Nothing matched. Try a CODE.issuer pair, an NFTokenID, or another name.');
+          return true;
+        }
+
+        const rows = [
+          ...toks.map((t) => {
+            const code = fromCurrencyCode(t.currency);
+            return [{ text: `🪙 ${code} — ${t.name || short(t.issuer)}`,
+                     callback_data: `watch:add:${ref(`${code}.${t.issuer}`)}` }];
+          }),
+          ...cols.map((c) => [{ text: `🖼 ${c.name || c.slug} (collection)`,
+                               callback_data: `watch:add:${ref(`col:${c.slug}`)}` }]),
+        ];
+        await ctx.replyWithHTML('<b>Pick what to watch</b>', { reply_markup: { inline_keyboard: rows } });
         return true;
       }
 
@@ -203,13 +241,18 @@ const compact = (v) =>
 
 /** Notifies on new fills for a 'buys' watch and advances its high-water mark. */
 async function checkBuyWatch(bot, w) {
-  const isNft = w.asset.length === 64;
+  const isCollection = w.asset.startsWith('col:');
+  const isNft = !isCollection && w.asset.length === 64;
 
   let trades = [];
   let t0 = {};
   let md5 = null;
 
-  if (isNft) {
+  if (isCollection) {
+    const res = await safe(api.collectionHistory(w.asset.slice(4), 30));
+    // The feed is mostly offer churn; only SALE is an actual buy.
+    trades = (res?.history || []).filter((e) => e.type === 'SALE');
+  } else if (isNft) {
     const res = await safe(api.nftHistory(w.asset, 10));
     trades = res?.history || res?.data || [];
   } else {
@@ -223,14 +266,17 @@ async function checkBuyWatch(bot, w) {
   }
 
   const since = w.last_seen || 0;
-  const label = isNft ? `NFT ${w.asset.slice(0, 8)}…` : parseAsset(w.asset).label;
+  const label = watchLabel(w.asset);
 
   const fresh = trades
     .map((t) => ({ ...t, _t: Number(t.time || t.timestamp || 0) }))
     .filter((t) => t._t > since)
-    // Only acquisitions of the watched token count as a buy; the same feed
-    // carries sells, which would otherwise fire a green "New BUY" alert.
-    .filter((t) => (isNft ? true : t.got?.currency === t0.currency || t.got?.issuer === t0.issuer))
+    // For tokens, only acquisitions of the watched asset count as a buy — the
+    // same feed carries sells, which would otherwise fire a green "New BUY".
+    // NFT and collection feeds are already filtered to sales.
+    .filter((t) => (isNft || isCollection
+      ? true
+      : t.got?.currency === t0.currency || t.got?.issuer === t0.issuer))
     .sort((a, b) => a._t - b._t);
 
   if (!fresh.length) return;
@@ -241,19 +287,23 @@ async function checkBuyWatch(bot, w) {
 
   // Cap the burst: a busy token shouldn't spam a hundred messages at once.
   for (const t of fresh.slice(-3)) {
-    const gotAmt = Number(t.got?.value ?? t.amount ?? 0) || null;
+    // NFT sales price the whole item; token fills price what was received.
+    const gotAmt = isCollection || isNft ? null : (Number(t.got?.value ?? t.amount ?? 0) || null);
     // Routes that never touch XRP (token-to-token, AMM hops) still need a size
     // to show, so fall back to valuing what was received at the token's rate.
-    const xrpSpent = t.paid?.currency === 'XRP'
-      ? Number(t.paid.value)
-      : (Number(t._mergedXrp) || (gotAmt && t0.exch ? gotAmt * Number(t0.exch) : null));
+    const xrpSpent = isCollection || isNft
+      ? (Number(t.costXRP) || Number(t.cost?.amount) || Number(t.amount) || null)
+      : (t.paid?.currency === 'XRP'
+        ? Number(t.paid.value)
+        : (Number(t._mergedXrp) || (gotAmt && t0.exch ? gotAmt * Number(t0.exch) : null)));
     const usd = xrpSpent && usdPerXrp ? xrpSpent * usdPerXrp : null;
 
+    const buyer = t.taker || t.buyer;
     const row2 = [
       t.hash ? `<a href="${links.tx(t.hash)}">TX</a>` : null,
-      t.taker ? `<a href="${links.account(t.taker)}">Buyer</a>` : null,
+      buyer ? `<a href="${links.account(buyer)}">Buyer</a>` : null,
       md5 ? `<a href="${links.scanner(md5)}">Chart</a>` : null,
-      md5 ? `<a href="${links.trending}">Trending</a>` : null,
+      `<a href="${links.trending}">Trending</a>`,
     ].filter(Boolean).join(' | ');
 
     const lines = [
@@ -262,6 +312,7 @@ async function checkBuyWatch(bot, w) {
       '',
       xrpSpent ? `🔻 <b>${num(xrpSpent, 4)} XRP</b>${usd ? ` | $${num(usd, 2)}` : ''}` : null,
       gotAmt ? `🔺 <b>${num(gotAmt, 2)} ${esc(label)}</b>` : null,
+      isCollection && t.NFTokenID ? `🖼 <code>${t.NFTokenID.slice(0, 16)}…</code>` : null,
       t.isAMM ? '💠 via AMM' : null,
       row2 ? `🏷 ${row2}` : null,
       '',
@@ -277,7 +328,8 @@ async function checkBuyWatch(bot, w) {
         disable_web_page_preview: true,
         reply_markup: {
           inline_keyboard: [[
-            ...(isNft ? [] : [{ text: '💰 Buy now', callback_data: `buy:show:${ref(w.asset)}` }]),
+            ...(isNft || isCollection
+              ? [] : [{ text: '💰 Buy now', callback_data: `buy:show:${ref(w.asset)}` }]),
             { text: '🔄 Swap', url: links.swap },
           ]],
         },

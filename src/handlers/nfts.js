@@ -7,7 +7,7 @@ import {
 import { api, safe } from '../services/api.js';
 import { setState, clearState } from '../services/session.js';
 import { ref, derefOrThrow } from '../services/refs.js';
-import { nftMenu, nftActions, backButton, editOrReply, esc, num, short } from '../ui/index.js';
+import { nftMenu, nftActions, backButton, editOrReply, requirePrivate, esc, num, short } from '../ui/index.js';
 
 const NFTOKEN_ID = /^[0-9A-F]{64}$/i;
 
@@ -102,6 +102,7 @@ export function registerNfts(bot) {
 
   bot.action(/^nft:buy:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery('Sweeping floor…');
+    if (!(await requirePrivate(ctx))) return;
     let pending, nftokenId;
     try {
       nftokenId = derefOrThrow(ctx.match[1]);
@@ -130,6 +131,7 @@ export function registerNfts(bot) {
 
   bot.action(/^nft:bid:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
+    if (!(await requirePrivate(ctx))) return;
     try {
       setState(ctx.from.id, { awaiting: 'nft_bid', nftokenId: derefOrThrow(ctx.match[1]) });
       await ctx.replyWithHTML(
@@ -142,6 +144,7 @@ export function registerNfts(bot) {
 
   bot.action('nft:mine', async (ctx) => {
     await ctx.answerCbQuery('Loading…');
+    if (!(await requirePrivate(ctx))) return;
     const user = ensureUser(ctx);
     if (!user.address) return ctx.reply('Connect a wallet first — /wallet');
 
@@ -184,6 +187,7 @@ export function registerNfts(bot) {
 
   bot.action(/^nft:list:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
+    if (!(await requirePrivate(ctx))) return;
     try {
       setState(ctx.from.id, { awaiting: 'nft_list', nftokenId: derefOrThrow(ctx.match[1]) });
       await ctx.reply('List at what price in XRP?');
@@ -192,6 +196,7 @@ export function registerNfts(bot) {
 
   bot.action(/^nft:accept:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery('Accepting…');
+    if (!(await requirePrivate(ctx))) return;
     try {
       const wallet = requireWallet(ctx.from.id);
       const res = await acceptBid(wallet, derefOrThrow(ctx.match[1]));
@@ -219,6 +224,7 @@ export function registerNfts(bot) {
 
       if (state.awaiting === 'nft_bid') {
         clearState(ctx.from.id);
+        if (!(await requirePrivate(ctx))) return true;
         const [priceRaw, hoursRaw] = text.split(/\s+/);
         const price = Number(priceRaw);
         if (!(price > 0)) { await ctx.reply('Enter a positive XRP amount.'); return true; }
@@ -244,6 +250,7 @@ export function registerNfts(bot) {
 
       if (state.awaiting === 'nft_list') {
         clearState(ctx.from.id);
+        if (!(await requirePrivate(ctx))) return true;
         const price = Number(text);
         if (!(price > 0)) { await ctx.reply('Enter a positive XRP price.'); return true; }
         try {
